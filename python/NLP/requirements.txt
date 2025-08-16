@@ -1,0 +1,37 @@
+# Azure AI Foundry NLP Requirements
+# Install with: pip install -r requirements.txt
+
+# Azure AI Services
+azure-ai-textanalytics>=5.3.0
+azure-identity>=1.15.0
+azure-core>=1.29.0
+
+# Azure AI Language (for PII detection)
+azure-ai-language-conversations>=1.1.0
+
+# OpenAI integration for Azure OpenAI
+openai>=1.35.0
+
+# Document processing (inherit from parent)
+python-docx>=1.1.0
+PyPDF2>=3.0.1
+reportlab>=4.0.4
+
+# Additional NLP libraries
+spacy>=3.7.0
+transformers>=4.35.0
+
+# Data handling and utilities
+pandas>=2.1.0
+numpy>=1.24.0
+regex>=2023.8.8
+
+# Configuration management
+python-dotenv>=1.0.0
+
+# Logging and monitoring
+structlog>=23.2.0
+
+# Optional: Enhanced PDF processing
+# pymupdf>=1.23.5
+# pdfplumber>=0.10.0
