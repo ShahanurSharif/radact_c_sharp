@@ -1,19 +1,34 @@
-# Document Redaction Tool - Python Requirements
+# Document Redaction Tool - Python Requirements (Python Subdirectory)
 # Install with: pip install -r requirements.txt
 
 # DOCX document processing
-python-docx==1.1.0
+python-docx>=1.1.0
 
-# PDF document reading
-PyPDF2==3.0.1
+# PDF document reading and manipulation
+PyPDF2>=3.0.1
 
 # PDF document creation (more reliable than iText7)
-reportlab==4.0.4
+reportlab>=4.0.4
 
-# Additional utilities for better text processing
-regex==2023.8.8
+# Advanced text processing and pattern matching
+regex>=2023.8.8
 
-# Optional: Better PDF reading (alternative to PyPDF2)
-# Uncomment if you want to try a different PDF reader
-# pymupdf==1.23.3
-# pdfplumber==0.9.0
+# Image processing (automatically installed with reportlab/python-docx)
+pillow>=11.0.0
+
+# XML processing (automatically installed with python-docx)
+lxml>=6.0.0
+
+# Type extensions for older Python versions
+typing_extensions>=4.14.0
+
+# Optional: Better PDF processing alternatives
+# Uncomment if you want to try different PDF libraries
+# pymupdf>=1.23.5        # Faster PDF processing
+# pdfplumber>=0.10.0     # Better text extraction
+# pypdf>=4.0.0           # Modern PyPDF2 successor
+
+# Development and testing dependencies (optional)
+# pytest>=7.4.0          # For running tests
+# black>=23.0.0          # Code formatting
+# flake8>=6.0.0          # Code linting
