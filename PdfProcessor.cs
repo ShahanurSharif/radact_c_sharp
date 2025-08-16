@@ -96,39 +96,102 @@ public class PdfProcessor : CommonProcessor
             File.Delete(outputPath);
         }
 
-        // Try basic PDF creation without complex formatting
-        var writerProperties = new WriterProperties();
-        using var writer = new PdfWriter(outputPath, writerProperties);
-        using var pdfDoc = new PdfDocument(writer);
-        using var document = new iText.Layout.Document(pdfDoc);
-        
-        // Set basic page size and margins
-        pdfDoc.SetDefaultPageSize(iText.Kernel.Geom.PageSize.A4);
-        document.SetMargins(50, 50, 50, 50);
-        
-        // Add title
-        document.Add(new iText.Layout.Element.Paragraph("REDACTED DOCUMENT")
-            .SetFontSize(16)
-            .SetTextAlignment(iText.Layout.Properties.TextAlignment.CENTER)
-            .SetMarginBottom(20));
-        
-        // Add content in chunks to avoid issues
-        var lines = content.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-        foreach (var line in lines)
+        try
         {
-            if (!string.IsNullOrWhiteSpace(line))
+            // Create PDF with explicit file stream handling
+            using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
             {
-                document.Add(new iText.Layout.Element.Paragraph(line.Trim())
-                    .SetFontSize(11)
-                    .SetMarginBottom(5));
+                var writerProperties = new WriterProperties();
+                using (var writer = new PdfWriter(fileStream, writerProperties))
+                {
+                    using (var pdfDoc = new PdfDocument(writer))
+                    {
+                        pdfDoc.SetDefaultPageSize(iText.Kernel.Geom.PageSize.A4);
+                        
+                        using (var document = new iText.Layout.Document(pdfDoc))
+                        {
+                            document.SetMargins(50, 50, 50, 50);
+                            
+                            // Add title
+                            document.Add(new iText.Layout.Element.Paragraph("REDACTED DOCUMENT")
+                                .SetFontSize(16)
+                                .SetTextAlignment(iText.Layout.Properties.TextAlignment.CENTER)
+                                .SetMarginBottom(20));
+                            
+                            // Add content line by line
+                            var lines = content.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                            
+                            if (lines.Length == 0)
+                            {
+                                // If no content, add a placeholder
+                                document.Add(new iText.Layout.Element.Paragraph("No content available")
+                                    .SetFontSize(11));
+                            }
+                            else
+                            {
+                                foreach (var line in lines)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(line))
+                                    {
+                                        document.Add(new iText.Layout.Element.Paragraph(line.Trim())
+                                            .SetFontSize(11)
+                                            .SetMarginBottom(5));
+                                    }
+                                }
+                            }
+                            
+                            // Explicitly close the document to ensure content is written
+                            document.Close();
+                        }
+                        // Explicitly close PDF document
+                        pdfDoc.Close();
+                    }
+                    // Explicitly close writer
+                    writer.Close();
+                }
+                // Ensure file stream is flushed
+                fileStream.Flush();
+            }
+            
+            Console.WriteLine($"✅ PDF creation completed. Checking file size...");
+            
+            // Verify the file was actually created with content
+            if (File.Exists(outputPath))
+            {
+                var fileInfo = new FileInfo(outputPath);
+                Console.WriteLine($"📄 PDF file size: {fileInfo.Length} bytes");
+                
+                if (fileInfo.Length == 0)
+                {
+                    Console.WriteLine("❌ PDF file is empty - creation failed");
+                    File.Delete(outputPath); // Remove empty file
+                    throw new Exception("PDF file created but is empty");
+                }
             }
             else
             {
-                document.Add(new iText.Layout.Element.Paragraph(" ")
-                    .SetMarginBottom(5));
+                throw new Exception("PDF file was not created");
             }
         }
-        
-        // Document will be automatically closed by using statements
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Detailed PDF creation error: {ex.Message}");
+            Console.WriteLine($"❌ Stack trace: {ex.StackTrace}");
+            
+            // Clean up any partial file
+            if (File.Exists(outputPath))
+            {
+                try
+                {
+                    File.Delete(outputPath);
+                }
+                catch
+                {
+                    // Ignore cleanup errors
+                }
+            }
+            
+            throw; // Re-throw to be caught by SaveContent method
+        }
     }
 }
