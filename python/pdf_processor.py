@@ -50,7 +50,6 @@ class PdfProcessor(CommonProcessor):
         # Fix common character encoding issues
         text = text.replace('ﬁ', 'fi')
         text = text.replace('�', 'fi')
-        text = text.replace(''', "'")  # Fix smart quote to regular quote
         
         # Clean up line breaks and spacing
         text = re.sub(r'\r\n|\r|\n', '\n', text)
