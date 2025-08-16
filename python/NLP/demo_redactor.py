@@ -36,65 +36,99 @@ class DemoAzureAIRedactor:
         """Initialize demo redactor with regex patterns"""
         self.confidence_threshold = 0.8
         
-        # Enhanced regex patterns for demo
+        # Enhanced regex patterns for demo with contextual awareness
         self.patterns = {
             'Person': [
                 re.compile(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b'),  # First Last
                 re.compile(r'\b[A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+\b'),  # First M. Last
+                re.compile(r'(?i)(?:name|employee|person|contact)\s*:?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)', re.IGNORECASE),
+                re.compile(r'(?i)(?:from|to|by|signed)\s*:?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)', re.IGNORECASE),
             ],
             'PhoneNumber': [
                 re.compile(r'\b(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})\b'),
-                re.compile(r'\b\d{3}-\d{3}-\d{4}\b'),
+                re.compile(r'\(\d{3}\)\s?\d{3}-?\d{4}'),  # (555) 123-4567 format
+                re.compile(r'(?i)(?:phone|tel|mobile|cell)\s*:?\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})', re.IGNORECASE),
+                re.compile(r'(?i)(?:contact|call)\s*:?\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})', re.IGNORECASE),
             ],
             'Address': [
-                re.compile(r'\b\d{1,5}\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd)\b', re.IGNORECASE),
+                re.compile(r'\b\d{1,5}\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way|Ct|Court|Circle|Cir|Place|Pl)\b', re.IGNORECASE),
+                re.compile(r'(?i)(?:address|addr)\s*:?\s*(\d{1,5}\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd))', re.IGNORECASE),
             ],
             'CreditCardNumber': [
                 re.compile(r'\b(?:\d{4}[-\s]?){3}\d{4}\b'),
                 re.compile(r'\b\d{13,19}\b'),  # Generic card number
+                re.compile(r'(?i)(?:card|cc|credit)\s*:?\s*(\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4})', re.IGNORECASE),
             ],
             'Email': [
                 re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+                re.compile(r'(?i)(?:email|e-mail)\s*:?\s*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,})', re.IGNORECASE),
             ],
             'IPAddress': [
                 re.compile(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'),
             ],
             'PersonType': [
                 re.compile(r'\b(?:CEO|CFO|CTO|Manager|Director|President|Vice President|Analyst|Engineer|Developer)\b', re.IGNORECASE),
+            ],
+            'USPersonalIdentificationNumber': [
+                re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),  # Standard SSN
+                re.compile(r'\b\d{3}\s\d{2}\s\d{4}\b'),  # Space separated
+                re.compile(r'(?i)(?:ssn|social\s*security)\s*:?\s*(\d{3}[-\s]?\d{2}[-\s]?\d{4})', re.IGNORECASE),
             ]
         }
         
         logger.info("Demo Azure AI Redactor initialized with regex patterns")
     
     def detect_pii_entities(self, text: str) -> List[DemoPIIEntity]:
-        """Detect PII entities using regex patterns"""
+        """Detect PII entities using enhanced regex patterns with context awareness"""
         entities = []
         
         for category, pattern_list in self.patterns.items():
             for pattern in pattern_list:
                 matches = pattern.finditer(text)
                 for match in matches:
+                    # For contextual patterns, extract the actual PII from the capture group
+                    if match.groups():
+                        # Use the captured group (the actual PII data)
+                        pii_text = match.group(1)
+                        # Find the position of the PII text within the full match
+                        full_match = match.group(0)
+                        pii_start = full_match.find(pii_text)
+                        offset = match.start() + pii_start
+                        length = len(pii_text)
+                    else:
+                        # Use the full match
+                        pii_text = match.group(0)
+                        offset = match.start()
+                        length = len(pii_text)
+                    
                     entity = DemoPIIEntity(
-                        text=match.group(),
+                        text=pii_text,
                         category=category,
                         subcategory=None,
-                        confidence_score=0.9,  # High confidence for regex matches
-                        offset=match.start(),
-                        length=match.end() - match.start()
+                        confidence_score=0.95 if match.groups() else 0.9,  # Higher confidence for contextual matches
+                        offset=offset,
+                        length=length
                     )
                     entities.append(entity)
         
-        # Remove duplicates (same text at same position)
+        # Remove duplicates (same text at overlapping positions)
         unique_entities = []
-        seen = set()
+        seen_positions = set()
         
-        for entity in entities:
-            key = (entity.text, entity.offset)
-            if key not in seen:
-                seen.add(key)
+        for entity in sorted(entities, key=lambda x: (x.offset, -x.confidence_score)):
+            # Check for overlap with existing entities
+            entity_range = range(entity.offset, entity.offset + entity.length)
+            overlap = any(
+                pos in entity_range 
+                for existing_start, existing_end in seen_positions
+                for pos in range(existing_start, existing_end)
+            )
+            
+            if not overlap:
                 unique_entities.append(entity)
+                seen_positions.add((entity.offset, entity.offset + entity.length))
         
-        logger.info("Demo PII detection completed", entities_found=len(unique_entities))
+        logger.info("Enhanced demo PII detection completed", entities_found=len(unique_entities))
         return unique_entities
     
     def redact_text(self, text: str, custom_redaction_map: Optional[Dict[str, str]] = None) -> DemoRedactionResult:

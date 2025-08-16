@@ -50,12 +50,37 @@ class AzureAIRedactor:
         self.client = self.config.get_text_analytics_client()
         self.confidence_threshold = self.config.confidence_threshold
         
-        # Custom regex patterns for enhanced detection
+        # Enhanced regex patterns with contextual detection
         self.custom_patterns = {
-            'credit_card': re.compile(r'\b(?:\d{4}[-\s]?){3}\d{4}\b'),
-            'phone': re.compile(r'\b(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})\b'),
-            'ssn': re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),
-            'email': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+            'credit_card': [
+                re.compile(r'\b(?:\d{4}[-\s]?){3}\d{4}\b'),  # Standard format
+                re.compile(r'\b\d{13,19}\b'),  # Generic long number
+                re.compile(r'(?i)(?:card|cc|credit)\s*:?\s*(\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4})', re.IGNORECASE),
+            ],
+            'phone': [
+                re.compile(r'\b(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})\b'),  # Standard
+                re.compile(r'\(\d{3}\)\s?\d{3}-?\d{4}'),  # (555) 123-4567 format
+                re.compile(r'(?i)(?:phone|tel|mobile|cell)\s*:?\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})', re.IGNORECASE),
+                re.compile(r'(?i)(?:contact|call)\s*:?\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})', re.IGNORECASE),
+            ],
+            'ssn': [
+                re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),  # Standard SSN
+                re.compile(r'\b\d{3}\s\d{2}\s\d{4}\b'),  # Space separated
+                re.compile(r'\b\d{9}\b'),  # No separators
+                re.compile(r'(?i)(?:ssn|social\s*security)\s*:?\s*(\d{3}[-\s]?\d{2}[-\s]?\d{4})', re.IGNORECASE),
+            ],
+            'email': [
+                re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+                re.compile(r'(?i)(?:email|e-mail)\s*:?\s*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,})', re.IGNORECASE),
+            ],
+            'address': [
+                re.compile(r'\b\d{1,5}\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way|Ct|Court|Circle|Cir|Place|Pl)\b', re.IGNORECASE),
+                re.compile(r'(?i)(?:address|addr)\s*:?\s*(\d{1,5}\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd))', re.IGNORECASE),
+            ],
+            'name_context': [
+                re.compile(r'(?i)(?:name|employee|person|contact)\s*:?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)', re.IGNORECASE),
+                re.compile(r'(?i)(?:from|to|by|signed)\s*:?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)', re.IGNORECASE),
+            ]
         }
         
         logger.info("Azure AI Redactor initialized", 
@@ -64,20 +89,21 @@ class AzureAIRedactor:
     
     def detect_pii_entities(self, text: str) -> List[PIIEntity]:
         """
-        Detect PII entities using Azure Text Analytics
+        Detect PII entities using hybrid approach: Azure Text Analytics + enhanced regex
         
         Args:
             text: Text to analyze
             
         Returns:
-            List of detected PII entities
+            List of detected PII entities from both Azure and regex
         """
+        all_entities = []
+        
         try:
-            # Split text into chunks if it's too long (Azure has limits)
+            # First, try Azure Text Analytics
             max_chars = 5000
             chunks = [text[i:i+max_chars] for i in range(0, len(text), max_chars)]
             
-            all_entities = []
             offset_adjustment = 0
             
             for chunk in chunks:
@@ -104,44 +130,117 @@ class AzureAIRedactor:
                 
                 offset_adjustment += len(chunk)
             
-            logger.info("PII detection completed", 
-                       entities_found=len(all_entities),
-                       text_length=len(text))
-            
-            return all_entities
+            logger.info("Azure PII detection completed", 
+                       azure_entities=len(all_entities))
             
         except Exception as e:
-            logger.error("Error in PII detection", error=str(e))
-            # Fallback to custom regex patterns
-            return self._fallback_detection(text)
+            logger.error("Azure PII detection failed", error=str(e))
+        
+        # ALWAYS run enhanced regex patterns as well (hybrid approach)
+        regex_entities = self._fallback_detection(text)
+        logger.info("Regex PII detection completed", 
+                   regex_entities=len(regex_entities))
+        
+        # Combine and deduplicate entities
+        combined_entities = all_entities + regex_entities
+        
+        # Remove duplicates and overlaps (keep highest confidence)
+        unique_entities = []
+        processed_ranges = []
+        
+        # Sort by confidence score (highest first)
+        for entity in sorted(combined_entities, key=lambda x: -x.confidence_score):
+            entity_range = range(entity.offset, entity.offset + entity.length)
+            
+            # Check for overlap with existing entities
+            overlap = any(
+                len(set(entity_range) & set(range(start, end))) > 0
+                for start, end in processed_ranges
+            )
+            
+            if not overlap:
+                unique_entities.append(entity)
+                processed_ranges.append((entity.offset, entity.offset + entity.length))
+        
+        logger.info("Hybrid PII detection completed", 
+                   total_unique_entities=len(unique_entities),
+                   azure_found=len(all_entities),
+                   regex_found=len(regex_entities))
+        
+        return unique_entities
     
     def _fallback_detection(self, text: str) -> List[PIIEntity]:
         """
-        Fallback PII detection using regex patterns
+        Enhanced fallback PII detection using contextual regex patterns
         
         Args:
             text: Text to analyze
             
         Returns:
-            List of detected entities using regex
+            List of detected entities using regex with context awareness
         """
         entities = []
         
-        for category, pattern in self.custom_patterns.items():
-            matches = pattern.finditer(text)
-            for match in matches:
-                entity = PIIEntity(
-                    text=match.group(),
-                    category=category,
-                    subcategory=None,
-                    confidence_score=0.9,  # High confidence for regex matches
-                    offset=match.start(),
-                    length=match.end() - match.start()
-                )
-                entities.append(entity)
+        for category, pattern_list in self.custom_patterns.items():
+            for pattern in pattern_list:
+                matches = pattern.finditer(text)
+                for match in matches:
+                    # For contextual patterns, extract the actual PII from the capture group
+                    if match.groups():
+                        # Use the captured group (the actual PII data)
+                        pii_text = match.group(1)
+                        # Find the position of the PII text within the full match
+                        full_match = match.group(0)
+                        pii_start = full_match.find(pii_text)
+                        offset = match.start() + pii_start
+                        length = len(pii_text)
+                    else:
+                        # Use the full match
+                        pii_text = match.group(0)
+                        offset = match.start()
+                        length = len(pii_text)
+                    
+                    # Map internal categories to Azure categories
+                    azure_category = {
+                        'credit_card': 'CreditCardNumber',
+                        'phone': 'PhoneNumber', 
+                        'ssn': 'USPersonalIdentificationNumber',
+                        'email': 'Email',
+                        'address': 'Address',
+                        'name_context': 'Person'
+                    }.get(category, category)
+                    
+                    entity = PIIEntity(
+                        text=pii_text,
+                        category=azure_category,
+                        subcategory=None,
+                        confidence_score=0.95,  # High confidence for contextual matches
+                        offset=offset,
+                        length=length
+                    )
+                    entities.append(entity)
         
-        logger.info("Fallback detection completed", entities=len(entities))
-        return entities
+        # Remove duplicates (same text at overlapping positions)
+        unique_entities = []
+        seen_positions = set()
+        
+        for entity in sorted(entities, key=lambda x: (x.offset, -x.confidence_score)):
+            # Check for overlap with existing entities
+            entity_range = range(entity.offset, entity.offset + entity.length)
+            overlap = any(
+                pos in entity_range 
+                for existing_start, existing_end in seen_positions
+                for pos in range(existing_start, existing_end)
+            )
+            
+            if not overlap:
+                unique_entities.append(entity)
+                seen_positions.add((entity.offset, entity.offset + entity.length))
+        
+        logger.info("Enhanced fallback detection completed", 
+                   entities=len(unique_entities),
+                   categories=[e.category for e in unique_entities])
+        return unique_entities
     
     def redact_text(self, text: str, custom_redaction_map: Optional[Dict[str, str]] = None) -> RedactionResult:
         """
