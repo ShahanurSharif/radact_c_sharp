@@ -7,3 +7,8 @@ riderModule.iml
 /.vscode/
 .env
 python/NLP/.env
+python/LLM/.env
+python/NLP/venv
+python/LLM/venv
+python/NLP/__pycache__/
+python/LLM/__pycache__/
